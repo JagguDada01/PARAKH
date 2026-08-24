@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # PostGIS / PostgreSQL Database
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: mplads_db
+    restart: always
+    environment:
+      POSTGRES_USER: mplads_user
+      POSTGRES_PASSWORD: mplads_password
+      POSTGRES_DB: mplads_vigil
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mplads_user -d mplads_vigil"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend API Service
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: mplads_backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://mplads_user:mplads_password@db:5432/mplads_vigil
+      - SECRET_KEY=sih-2026-mplads-ai-super-secret-key-production-ready-256bit
+      - CORS_ORIGINS=["http://localhost:5173", "http://localhost:3000", "http://localhost:80", "http://127.0.0.1:5173", "*"]
+    ports:
+      - "8000:8000"
+
+  # React Vite Frontend Web Client
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: mplads_frontend
+    restart: always
+    depends_on:
+      - backend
+    environment:
+      - VITE_API_URL=http://localhost:8000/api/v1
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:
