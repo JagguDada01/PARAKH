@@ -192,34 +192,37 @@ def get_analytics_overview(db: Session = Depends(get_db)):
         for cat, data in sorted(cat_map.items(), key=lambda x: x[1]["total"], reverse=True)
     ]
 
-    # 7.5 Quarterly Scheme Progression Timeline (Sanction vs Expenditure Outlay)
-    quarters_map: Dict[str, Dict[str, float]] = {}
-    time_series_data = db.query(
-        Project.start_date,
-        Project.sanctioned_amount,
-        Project.expenditure
-    ).filter(Project.start_date != None).all()
+    # 7.5 Quarterly Scheme Progression Timeline (SQL level - Zero memory overhead)
+    year_col = func.strftime('%Y', Project.start_date)
+    month_col = func.strftime('%m', Project.start_date)
+    quarter_expr = case(
+        (month_col.in_(['01', '02', '03']), year_col + '-Q1'),
+        (month_col.in_(['04', '05', '06']), year_col + '-Q2'),
+        (month_col.in_(['07', '08', '09']), year_col + '-Q3'),
+        else_=year_col + '-Q4'
+    )
 
-    for s_date, sanc, exp in time_series_data:
-        if s_date:
-            year = s_date.year
-            month = s_date.month
-            q_num = (month - 1) // 3 + 1
-            q_key = f"{year}-Q{q_num}"
-            if q_key not in quarters_map:
-                quarters_map[q_key] = {"sanc": 0.0, "exp": 0.0}
-            quarters_map[q_key]["sanc"] += (sanc or 0.0)
-            quarters_map[q_key]["exp"] += (exp or 0.0)
+    q_query = (
+        db.query(
+            quarter_expr.label("quarter"),
+            func.sum(Project.sanctioned_amount).label("sanc"),
+            func.sum(Project.expenditure).label("exp")
+        )
+        .filter(Project.start_date != None)
+        .group_by(quarter_expr)
+        .order_by(quarter_expr)
+        .all()
+    )
 
     from app.schemas.analytics import QuarterlyProgressionItem
     quarterly_progression = [
         QuarterlyProgressionItem(
-            quarter=q_k,
-            sanctioned_crores=round(q_v["sanc"] / 100.0, 2),
-            expenditure_crores=round(q_v["exp"] / 100.0, 2)
+            quarter=str(row[0]),
+            sanctioned_crores=round((row[1] or 0.0) / 100.0, 2),
+            expenditure_crores=round((row[2] or 0.0) / 100.0, 2)
         )
-        for q_k, q_v in sorted(quarters_map.items())
-        if ("2023" in q_k or "2024" in q_k or "2025" in q_k or "2026" in q_k)
+        for row in q_query
+        if row[0] and any(y in str(row[0]) for y in ["2023", "2024", "2025", "2026"])
     ]
 
     active_alerts = db.query(func.count(Alert.id)).filter(
