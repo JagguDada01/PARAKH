@@ -266,3 +266,39 @@ def get_analytics_overview(db: Session = Depends(get_db)):
     _CACHE["timestamp"] = now_ts
     _CACHE["data"] = result
     return result
+
+
+@router.get("/sync-database")
+@router.post("/sync-database")
+def force_sync_database(db: Session = Depends(get_db)):
+    import gzip
+    import shutil
+    from pathlib import Path
+    from app.core.config import settings
+    from app.db.session import engine
+
+    _CACHE["data"] = None
+    _CACHE["timestamp"] = 0.0
+
+    db_path_str = settings.DATABASE_URL.replace("sqlite:///", "")
+    db_file = Path(db_path_str).resolve()
+    gz_file = Path(__file__).resolve().parents[1] / "db" / "mplads.db.gz"
+
+    if gz_file.exists():
+        engine.dispose()
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(gz_file, "rb") as f_in:
+            with open(db_file, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        new_cnt = db.query(Project).count()
+        return {
+            "status": "SUCCESS",
+            "message": f"Successfully unpacked master database. Live projects count: {new_cnt}",
+            "projects_count": new_cnt
+        }
+    return {
+        "status": "NOT_FOUND",
+        "message": f"Archive file {gz_file} not found.",
+        "current_projects": db.query(Project).count()
+    }
+

@@ -15,23 +15,41 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: Check if compressed 95,964 works database exists
+def unpack_master_database_if_needed():
     try:
         db_path_str = settings.DATABASE_URL.replace("sqlite:///", "")
         db_file = Path(db_path_str).resolve()
         gz_file = Path(__file__).resolve().parent / "db" / "mplads.db.gz"
 
-        if (not db_file.exists() or db_file.stat().st_size < 1000) and gz_file.exists():
+        need_extract = False
+        if not db_file.exists() or db_file.stat().st_size < 10_000_000:
+            need_extract = True
+        else:
+            try:
+                db = SessionLocal()
+                cnt = db.query(Project).count()
+                db.close()
+                if cnt < 5000:
+                    need_extract = True
+            except Exception:
+                need_extract = True
+
+        if need_extract and gz_file.exists():
             logger.info(f"Extracting authentic 95,964 works database from {gz_file} to {db_file}...")
+            engine.dispose()
             db_file.parent.mkdir(parents=True, exist_ok=True)
             with gzip.open(gz_file, "rb") as f_in:
                 with open(db_file, "wb") as f_out:
                     shutil.copyfileobj(f_in, f_out)
-            logger.info(f"Extraction successful: {db_file.stat().st_size / (1024*1024):.1f} MB database active.")
+            logger.info(f"Database successfully active: {db_file.stat().st_size / (1024*1024):.1f} MB.")
     except Exception as e:
-        logger.warning(f"Database archive unpack check exception: {e}")
+        logger.error(f"Error extracting master database archive: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Ensure full 95,964 works database is active
+    unpack_master_database_if_needed()
 
     logger.info("Initializing database schema...")
     Base.metadata.create_all(bind=engine)
@@ -44,7 +62,7 @@ async def lifespan(app: FastAPI):
             stats = generate_synthetic_data(db=db, num_projects=140)
             logger.info(f"Seeding completed: {stats}")
         else:
-            logger.info(f"Database active with {project_count} authentic projects.")
+            logger.info(f"PARAKH Live System active with {project_count} authentic projects.")
     except Exception as e:
         logger.error(f"Error during startup data initialization: {e}")
     finally:
