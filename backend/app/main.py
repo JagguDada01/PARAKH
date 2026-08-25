@@ -6,6 +6,9 @@ from app.core.config import settings
 from app.db.session import engine, Base, SessionLocal
 from app.api import auth, projects, analytics, alerts, duplicates, ml, ai, ingestion, risk
 from app.services.synthetic_generator import generate_synthetic_data
+import gzip
+import shutil
+from pathlib import Path
 from app.db.models import Project
 
 logging.basicConfig(level=logging.INFO)
@@ -14,7 +17,22 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Create tables and auto-seed if empty
+    # Startup: Check if compressed 95,964 works database exists
+    try:
+        db_path_str = settings.DATABASE_URL.replace("sqlite:///", "")
+        db_file = Path(db_path_str).resolve()
+        gz_file = Path(__file__).resolve().parent / "db" / "mplads.db.gz"
+
+        if (not db_file.exists() or db_file.stat().st_size < 1000) and gz_file.exists():
+            logger.info(f"Extracting authentic 95,964 works database from {gz_file} to {db_file}...")
+            db_file.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(gz_file, "rb") as f_in:
+                with open(db_file, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            logger.info(f"Extraction successful: {db_file.stat().st_size / (1024*1024):.1f} MB database active.")
+    except Exception as e:
+        logger.warning(f"Database archive unpack check exception: {e}")
+
     logger.info("Initializing database schema...")
     Base.metadata.create_all(bind=engine)
     
@@ -26,7 +44,7 @@ async def lifespan(app: FastAPI):
             stats = generate_synthetic_data(db=db, num_projects=140)
             logger.info(f"Seeding completed: {stats}")
         else:
-            logger.info(f"Database already contains {project_count} projects.")
+            logger.info(f"Database active with {project_count} authentic projects.")
     except Exception as e:
         logger.error(f"Error during startup data initialization: {e}")
     finally:
